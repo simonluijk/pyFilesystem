@@ -66,7 +66,7 @@ class SFTPFS(FS):
               }
 
 
-    def __init__(self, connection, root_path="/", encoding=None, hostkey=None, username='', password=None, pkey=None, agent_auth=True, no_auth=False):
+    def __init__(self, connection, root_path="/", encoding=None, hostkey=None, username='', password=None, pkey=None, agent_auth=True, no_auth=False, look_for_keys=True):
         """SFTPFS constructor.
 
         The only required argument is 'connection', which must be something
@@ -155,6 +155,9 @@ class SFTPFS(FS):
                 if agent_auth and not connection.is_authenticated():
                     self._agent_auth(connection, username)                    
                 
+                if look_for_keys and not connection.is_authenticated():
+                    self._userkeys_auth(connection, username, password)
+
                 if not connection.is_authenticated():                    
                     try:                
                         connection.auth_none(username)
@@ -194,6 +197,39 @@ class SFTPFS(FS):
             except paramiko.SSHException:
                 pass
         return None       
+
+    @classmethod
+    def _userkeys_auth(cls, transport, username, password):
+        """
+        Attempt to authenticate to the given transport using any of the private
+        keys in the users ~/.ssh and ~/ssh dirs
+
+        Derived from http://www.lag.net/paramiko/docs/paramiko.client-pysrc.html
+        """
+
+        keyfiles = []
+        rsa_key = os.path.expanduser('~/.ssh/id_rsa')
+        dsa_key = os.path.expanduser('~/.ssh/id_dsa')
+        if os.path.isfile(rsa_key):
+            keyfiles.append((paramiko.rsakey.RSAKey, rsa_key))
+        if os.path.isfile(dsa_key):
+            keyfiles.append((paramiko.dsskey.DSSKey, dsa_key))
+        # look in ~/ssh/ for windows users:
+        rsa_key = os.path.expanduser('~/ssh/id_rsa')
+        dsa_key = os.path.expanduser('~/ssh/id_dsa')
+        if os.path.isfile(rsa_key):
+            keyfiles.append((paramiko.rsakey.RSAKey, rsa_key))
+        if os.path.isfile(dsa_key):
+            keyfiles.append((paramiko.dsskey.DSSKey, dsa_key))
+
+        for pkey_class, filename in keyfiles:
+            key = pkey_class.from_private_key_file(filename, password)
+            try:
+                transport.auth_publickey(username, key)
+                return key
+            except paramike.SSHException:
+                pass
+        return None
 
     def __del__(self):
         self.close()
